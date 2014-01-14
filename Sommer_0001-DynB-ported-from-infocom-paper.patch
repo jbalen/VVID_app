@@ -1,0 +1,760 @@
+From 751786701ac8ae0262127d4faa78a22d59373278 Mon Sep 17 00:00:00 2001
+From: Christoph Sommer <christoph.sommer@uibk.ac.at>
+Date: Wed, 18 Sep 2013 11:01:04 +0200
+Subject: [PATCH] DynB (ported from infocom paper)
+
+---
+ examples/dynb/Node.ned                             |  65 +++++++
+ examples/dynb/config.xml                           |  13 ++
+ examples/dynb/debug                                |   2 +
+ examples/dynb/memcheck                             |   2 +
+ examples/dynb/net.ned                              |  45 +++++
+ examples/dynb/omnetpp.ini                          | 125 +++++++++++++
+ examples/dynb/run                                  |   2 +
+ .../application/dynb/DynamicBeaconingApplLayer.cc  | 201 +++++++++++++++++++++
+ .../application/dynb/DynamicBeaconingApplLayer.h   |  95 ++++++++++
+ .../application/dynb/DynamicBeaconingApplLayer.ned |  33 ++++
+ src/modules/mac/ieee80211p/Mac1609_4.cc            |  22 +++
+ src/modules/mac/ieee80211p/Mac1609_4.h             |   5 +
+ 12 files changed, 610 insertions(+)
+ create mode 100644 examples/dynb/Node.ned
+ create mode 100644 examples/dynb/config.xml
+ create mode 100755 examples/dynb/debug
+ create mode 100755 examples/dynb/memcheck
+ create mode 100644 examples/dynb/net.ned
+ create mode 100644 examples/dynb/omnetpp.ini
+ create mode 100755 examples/dynb/run
+ create mode 100644 src/modules/application/dynb/DynamicBeaconingApplLayer.cc
+ create mode 100644 src/modules/application/dynb/DynamicBeaconingApplLayer.h
+ create mode 100644 src/modules/application/dynb/DynamicBeaconingApplLayer.ned
+
+diff --git a/examples/dynb/Node.ned b/examples/dynb/Node.ned
+new file mode 100644
+index 0000000..72f27d2
+--- /dev/null
++++ b/examples/dynb/Node.ned
+@@ -0,0 +1,65 @@
++//
++//
++// Copyright (C) 2008 Christoph Sommer <christoph.sommer@informatik.uni-erlangen.de>
++//
++// Documentation for these modules is at http://veins.car2x.org/
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with this program; if not, write to the Free Software
++// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++//
++
++package org.mixim.examples.dynb;
++import org.mixim.base.modules.BaseArp;
++import org.mixim.base.modules.IBaseApplLayer;
++import org.mixim.modules.mobility.CircleMobility;
++import org.mixim.modules.nic.WirelessNic;
++import org.mixim.base.modules.IMobility;
++
++module Node
++{
++    parameters:
++        string applicationType = default("TestWaveApplLayer");
++        string mobilityType = default("CircleMobility");
++        @display("i=status/busy");
++    gates:
++        input radioIn; // gate for sendDirect
++    submodules:
++        appl: <applicationType> like IBaseApplLayer {
++            parameters:
++                @display("p=70,30;i=app");
++        }
++
++        arp: BaseArp {
++            parameters:
++                @display("p=130,108");
++        }
++
++        nic: WirelessNic {
++            parameters:
++                @display("p=60,166");
++        }
++
++        mobility: <mobilityType> like IMobility {
++            parameters:
++                @display("p=130,172;i=block/cogwheel");
++        }
++    connections:
++        nic.upperLayerOut --> appl.lowerLayerIn;
++        nic.upperLayerIn <-- appl.lowerLayerOut;
++        nic.upperControlOut --> appl.lowerControlIn;
++        nic.upperControlIn <-- appl.lowerControlOut;
++
++        radioIn --> nic.radioIn;
++
++}
+diff --git a/examples/dynb/config.xml b/examples/dynb/config.xml
+new file mode 100644
+index 0000000..195a4ad
+--- /dev/null
++++ b/examples/dynb/config.xml
+@@ -0,0 +1,13 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<root>
++	<AnalogueModels>
++		<AnalogueModel type="SimplePathlossModel">
++			<parameter name="alpha" type="double" value="2.0"/>
++			<parameter name="carrierFrequency" type="double" value="5.890e+9"/>
++		</AnalogueModel>
++	</AnalogueModels>
++	<Decider type="Decider80211p">
++		<!-- The center frequency on which the phy listens-->
++		<parameter name="centerFrequency" type="double" value="5.890e9"/>
++	</Decider>
++</root>
+diff --git a/examples/dynb/debug b/examples/dynb/debug
+new file mode 100755
+index 0000000..c360c96
+--- /dev/null
++++ b/examples/dynb/debug
+@@ -0,0 +1,2 @@
++#!/bin/sh
++gdb --args opp_run -l../../src/base/miximbase -l../../src/modules/miximmodules -n"../../src/base;../../src/modules;.." "$@"
+diff --git a/examples/dynb/memcheck b/examples/dynb/memcheck
+new file mode 100755
+index 0000000..5adf456
+--- /dev/null
++++ b/examples/dynb/memcheck
+@@ -0,0 +1,2 @@
++#!/bin/sh
++valgrind --tool=memcheck --leak-check=full --dsymutil=yes --log-file=valgrind.out -- opp_run -l../../base/miximbase -l../../modules/miximmodules -n"../../base;../../modules;.." "$@"
+diff --git a/examples/dynb/net.ned b/examples/dynb/net.ned
+new file mode 100644
+index 0000000..0b18f1c
+--- /dev/null
++++ b/examples/dynb/net.ned
+@@ -0,0 +1,45 @@
++//
++// This program is free software: you can redistribute it and/or modify
++// it under the terms of the GNU Lesser General Public License as published by
++// the Free Software Foundation, either version 3 of the License, or
++// (at your option) any later version.
++// 
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU Lesser General Public License for more details.
++// 
++// You should have received a copy of the GNU Lesser General Public License
++// along with this program.  If not, see http://www.gnu.org/licenses/.
++// 
++
++package org.mixim.examples.dynb;
++
++import org.mixim.base.connectionManager.ConnectionManager;
++import org.mixim.base.modules.BaseWorldUtility;
++import org.mixim.modules.world.annotations.AnnotationManager;
++import org.mixim.modules.obstacle.ObstacleControl;
++import org.mixim.modules.mobility.traci.TraCIScenarioManagerLaunchd;
++
++network net
++{
++    parameters:
++	int numHosts;
++
++    submodules:
++        baseWorldUtility: BaseWorldUtility {
++            @display("p=70,20");
++        }
++        connectionManager: ConnectionManager {
++            @display("p=70,91");
++        }
++        obstacles: ObstacleControl {
++            @display("p=240,50");
++        }
++        annotations: AnnotationManager {
++            @display("p=260,50");
++        }
++        host[numHosts]: Node;
++
++    connections allowunconnected:
++}
+diff --git a/examples/dynb/omnetpp.ini b/examples/dynb/omnetpp.ini
+new file mode 100644
+index 0000000..cc05a5c
+--- /dev/null
++++ b/examples/dynb/omnetpp.ini
+@@ -0,0 +1,125 @@
++[General]
++network = net
++debug-on-errors = true
++
++*.playgroundSizeX = 2500
++*.playgroundSizeY = 2500
++
++*.baseWorldUtility.coreDebug = false
++**.playgroundSizeX = 2500m
++**.playgroundSizeY = 2500m
++*.baseWorldUtility.playgroundSizeZ = 10m
++*.baseWorldUtility.useTorus = false
++*.baseWorldUtility.use2D = false
++
++*.connectionManager.coreDebug = false
++*.connectionManager.sendDirect = true
++*.connectionManager.pMax = 20mW
++*.connectionManager.sat = -94dBm
++*.connectionManager.alpha = 2.0
++*.connectionManager.carrierFrequency = 5.890e9 Hz
++
++*.**.nic.mac.useServiceChannel = false
++*.**.nic.mac.txPower = 2mW
++*.**.nic.mac.bitrate = 18Mbps
++*.**.nic.mac.queueSize = 1
++
++*.**.nic.phy.sensitivity = -94dBm
++*.**.nic.phy.maxTXPower = 2mW
++*.**.nic.phy.useThermalNoise = true
++*.**.nic.phy.thermalNoise = -110dBm
++*.**.nic.phy.usePropagationDelay = true
++
++##########################################################
++#                    WaveAppLayer                        #
++##########################################################
++
++#params of both Static- and DynamicBeaconingApplLayer
++*.host[*].appl.debug = false
++*.host[*].appl.headerLength = 256 bit
++*.host[*].appl.sendBeacons = true
++*.host[*].appl.dataOnSch = true
++*.host[*].appl.sendData = false
++*.host[*].appl.beaconPriority = 3
++*.host[*].appl.dataPriority = 2
++*.host[*].appl.upperLeftROIX = 4025
++*.host[*].appl.upperLeftROIY = 0
++*.host[*].appl.lowerRightROIX = 5025
++*.host[*].appl.lowerRightROIY = 9000
++*.host[*].appl.upperLeftGuardRegionX = 3925
++*.host[*].appl.upperLeftGuardRegionY = 0
++*.host[*].appl.lowerRightGuardRegionX = 5125
++*.host[*].appl.lowerRightGuardRegionY = 9000
++
++
++################ Mobility parameters #####################
++*.host[*].mobility.x = 0
++*.host[*].mobility.y = 0
++*.host[*].mobility.z = 0
++*.host[*].mobility.cx = uniform(1000, 1100)
++*.host[*].mobility.cy = uniform(1000, 1100)
++*.host[*].mobility.r = 0.0001
++*.host[*].mobility.speed = 0mps
++*.host[*].mobility.startAngle = 0
++*.host[*].mobility.acceleration = 0
++*.host[*].mobility.updateInterval = 1s
++*.host[*].mobility.antennaPositionOffset = 1.5m
++*.host[*].mobility.accidentCount = 0
++*.host[*].mobility.accidentStart = -1s
++*.host[*].mobility.accidentDuration = -1s
++*.host[*].mobility.accidentInterval = -1s
++
++
++################ Annotation parameters ################
++
++*.annotations.draw = false
++**.debug = false
++**.coreDebug = false
++
++num-rngs = 3
++seed-set = ${repetition}
++**.seed = ${repetition}
++warmup-period = 10s
++
++
++*.**.nic.macType = "Mac1609_4"
++*.**.nic.phyType = "PhyLayer80211p"
++
++*.host[*].applicationType = "DynamicBeaconingApplLayer"
++*.host[*].appl.neighborExpiry = ${3.9s}
++*.host[*].appl.minBeaconInterval = ${minInterval= 0.01s}
++*.host[*].appl.maxBeaconInterval = ${maxInterval= 1s}
++sim-time-limit = 42.5s
++*.numHosts = ${numHosts = 2, 10, 50, 100, 200, 400, 600, 800, 1000}
++
++repeat = 1
++*.host[101..].**.vector-recording=false
++*.host[*].appl.startBeaconingAt = 0s
++*.host[*].appl.beaconInterval.vector-recording=true
++*.host[*].appl.recv*.vector-recording=false
++*.host[*].appl.neighborLifetime*.vector-recording=false
++*.host[*].appl.*.vector-recording=true
++**.vector-recording=false
++**.scalar-recording=true
++
++**.connectionManager.alpha = 2
++**.nic.phy.analogueModels = xmldoc("config.xml")
++**.nic.phy.decider = xmldoc("config.xml")
++
++*.manager.updateInterval = 0.1s
++*.manager.firstStepAt = 10000s
++*.manager.launchConfig = xmldoc("quad.launch.xml")
++*.manager.vehicleInterarrivalTime = 10000s
++
++[Config static]
++output-scalar-file = ${resultdir}/static-${runnumber}-${repetition}.sca
++output-vector-file = ${resultdir}/static-${runnumber}-${repetition}.vec
++
++[Config moving]
++sim-time-limit = 32s
++output-scalar-file = ${resultdir}/moving-${runnumber}-${repetition}.sca
++output-vector-file = ${resultdir}/moving-${runnumber}-${repetition}.vec
++*.host[*{02468}].mobilityType = "TurtleMobility"
++*.host[*{02468}].mobility.updateInterval = 0.01s
++*.host[*{02468}].mobility.turtleScript = xml("<movement> <repeat> <moveto x=\"uniform(0,100)\" y=\"uniform(1000,1100)\" t=\".01\" /><wait t=\"11.99\"/><moveto x=\"uniform(1000,1100)\" y=\"uniform(1000,1100)\" t=\".01\" /><wait t=\"4.99\"/> <moveto x=\"uniform(0,100)\" y=\"uniform(1000,1100)\" t=\".01\" /><wait t=\"99.99\"/></repeat> </movement>")
++
+diff --git a/examples/dynb/run b/examples/dynb/run
+new file mode 100755
+index 0000000..5fac0a3
+--- /dev/null
++++ b/examples/dynb/run
+@@ -0,0 +1,2 @@
++#!/bin/sh
++opp_run -l../../src/base/miximbase -l../../src/modules/miximmodules -n"../../src/base;../../src/modules;.." "$@"
+diff --git a/src/modules/application/dynb/DynamicBeaconingApplLayer.cc b/src/modules/application/dynb/DynamicBeaconingApplLayer.cc
+new file mode 100644
+index 0000000..c10d383
+--- /dev/null
++++ b/src/modules/application/dynb/DynamicBeaconingApplLayer.cc
+@@ -0,0 +1,201 @@
++//
++// Copyright (C) 2012 Stefan Joerer <stefan.joerer@uibk.ac.at>
++//
++// Documentation for these modules is at http://veins.car2x.org/
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with this program; if not, write to the Free Software
++// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++//
++
++#include "DynamicBeaconingApplLayer.h"
++
++Define_Module(DynamicBeaconingApplLayer);
++
++void DynamicBeaconingApplLayer::initialize(int stage) {
++	BaseWaveApplLayer::initialize(stage);
++
++	std::string myName = getParentModule()->getFullName();
++
++	mac = dynamic_cast<Mac1609_4*>((getParentModule()->getSubmodule("nic")->getSubmodule("mac")));
++	if (mac == NULL) {
++		error("%s could not find Mac 1609_4 submodule.", myName.c_str());
++	}
++
++	radio = dynamic_cast<PhyLayer80211p*>((getParentModule()->getSubmodule("nic")->getSubmodule("phy")));
++	if (radio == NULL) {
++		error("%s could not find Ieee 802.11p Radio submodule.", myName.c_str());
++	}
++
++	if(stage == 1) {
++
++		lastBeaconAt = -1;
++		beaconSeqNumber = 0;
++		receivedBeacons = 0;
++		receivedData = 0;
++
++		neighborExpiry = par("neighborExpiry");
++		startBeaconingAt = par("startBeaconingAt");
++		neighbors.clear();
++		statsNeighbors.clear();
++		totalNeighbors.clear();
++		lastBusyTime = mac->getBusyTime();
++
++		minBeaconInterval = par("minBeaconInterval");
++		maxBeaconInterval = par("maxBeaconInterval");
++
++		neighborsVec.setName("neighbors");
++		protoNeighborsVec.setName("protoNeighbors");
++		neighborLifetimeVec.setName("neighborLifetime");
++		protoNeighborLifetimeVec.setName("protoNeighborLifetime");
++		receivedBeaconsSeqNumVec.setName("recvBeaconsSeqNum");
++		receivedBeaconsSourceVec.setName("recvBeaconsSource");
++		beaconIntervalVec.setName("beaconInterval");
++		channelPriorityVec.setName("channelPriority");
++		channelBusyRatioVec.setName("channelBusyRatio");
++		channelBusyTimeVec.setName("channelBusyTime");
++		channelNeighborsVec.setName("channelNeighbors");
++
++
++		cancelEvent(sendBeaconEvt);
++		scheduleAt(simTime() + uniform(0.1, 0.2), sendBeaconEvt);
++
++		DBG << "DynamicBeaconingApplLayer has been initialized!" << std::endl;
++	}
++}
++
++DynamicBeaconingApplLayer::~DynamicBeaconingApplLayer() {
++}
++
++void DynamicBeaconingApplLayer::finish() {
++	expireNeighbors(true);
++	expireStatsNeighbors(true);
++	recordScalar("totalNeighbors", totalNeighbors.size());
++}
++ 
++void DynamicBeaconingApplLayer::handleSelfMsg(cMessage* msg) {
++	switch (msg->getKind()) {
++		case SEND_BEACON_EVT: {
++			expireNeighbors();
++			expireStatsNeighbors();
++
++			// calculate channel busy ratio (busyTime/totalTime)
++			std::pair<simtime_t, simtime_t> busyTime = mac->getBusyTime();
++			double busyRatio = (busyTime.first - lastBusyTime.first).dbl()/(busyTime.second - lastBusyTime.second).dbl();
++			//std::cerr << "t=" << simTime() << " busyTime: " << busyTime.first << " / " << busyTime.second << std::endl;
++			lastBusyTime = busyTime;
++
++			// adapt interval_time
++			double b = std::max(0.0, std::min((busyRatio/0.25)-1, 1.0));
++			double relInterval = b;
++			simtime_t interval_time = minBeaconInterval + relInterval * (minBeaconInterval * neighbors.size());
++
++			// if interval_time still holds...
++			if (lastBeaconAt + interval_time <= simTime()) {
++				// send beacon
++				sendWSM(prepareWSM("beacon", beaconLengthBits, type_CCH, beaconPriority, 0, beaconSeqNumber));
++				lastBeaconAt = simTime();
++			}
++
++			// schedule next beacon
++			scheduleAt(lastBeaconAt + interval_time * uniform(1.00, 1.10), sendBeaconEvt);
++
++			break;
++		}
++		default: {
++			if (msg)
++				DBG << "APP: Error: Got Self Message of unknown kind! Name: " << msg->getName() << endl;
++			break;
++		}
++	}
++}
++
++void DynamicBeaconingApplLayer::sendWSM(WaveShortMessage* wsm) {
++	if (simTime() >= startBeaconingAt) {
++		BaseWaveApplLayer::sendWSM(wsm);
++		beaconSeqNumber++;
++	} else {
++		delete wsm;
++	}
++}
++
++void DynamicBeaconingApplLayer::onBeacon(WaveShortMessage* wsm) {
++	receivedBeacons++;
++
++	DBG << "Received beacon priority  " << wsm->getPriority() << " at " << simTime() << std::endl;
++	int senderId = wsm->getSenderAddress();
++
++	double dist = wsm->getSenderPos().distance(curPosition);
++
++	expireNeighbors();
++	expireStatsNeighbors();
++	if (neighbors.find(senderId) == neighbors.end()) {
++		neighbors[senderId].id = senderId;
++		neighbors[senderId].createdAt = simTime();
++	}
++	neighbors[senderId].dist = dist;
++	neighbors[senderId].lastUpdate = simTime();
++	if (statsNeighbors.find(senderId) == statsNeighbors.end()) {
++		statsNeighbors[senderId].id = senderId;
++		statsNeighbors[senderId].createdAt = simTime();
++	}
++	statsNeighbors[senderId].dist = dist;
++	statsNeighbors[senderId].lastUpdate = simTime();
++	totalNeighbors.insert(senderId);
++
++}
++
++void DynamicBeaconingApplLayer::onData(WaveShortMessage* wsm) {
++
++	int recipientId = wsm->getRecipientAddress();
++
++	if (recipientId == myId) {
++		DBG  << "Received data priority  " << wsm->getPriority() << " at " << simTime() << std::endl;
++		receivedData++;
++	}
++}
++
++void DynamicBeaconingApplLayer::expireNeighbors(bool expireAll) {
++	// what would be the maximum interval time I would calculate right now?
++	simtime_t interval_time_max = minBeaconInterval + 1.0 * (minBeaconInterval * neighbors.size());
++
++	// (just make sure it's somewhat reasonable)
++	interval_time_max = std::min(interval_time_max, simtime_t(60.0));
++
++	// and purge neighbors older than that
++	for (Neighbors::iterator i = neighbors.begin(); i != neighbors.end(); ) {
++		NeighborEntry& n = i->second;
++		if ((simTime() > n.lastUpdate + interval_time_max) || expireAll) {
++			neighbors.erase(i++);
++		} else {
++			i++;
++		}
++	}
++
++}
++
++void DynamicBeaconingApplLayer::expireStatsNeighbors(bool expireAll) {
++	simtime_t interval_time_max = neighborExpiry;
++
++	// and purge neighbors older than that
++	for (Neighbors::iterator i = statsNeighbors.begin(); i != statsNeighbors.end(); ) {
++		NeighborEntry& n = i->second;
++		if ((simTime() > n.lastUpdate + interval_time_max) || expireAll) {
++			statsNeighbors.erase(i++);
++		} else {
++			i++;
++		}
++	}
++
++}
++
+diff --git a/src/modules/application/dynb/DynamicBeaconingApplLayer.h b/src/modules/application/dynb/DynamicBeaconingApplLayer.h
+new file mode 100644
+index 0000000..318fd7c
+--- /dev/null
++++ b/src/modules/application/dynb/DynamicBeaconingApplLayer.h
+@@ -0,0 +1,95 @@
++//
++// Copyright (C) 2012 Stefan Joerer <stefan.joerer@uibk.ac.at>
++//
++// Documentation for these modules is at http://veins.car2x.org/
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with this program; if not, write to the Free Software
++// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++//
++
++#ifndef DYNAMICBEACONINGAPPLLAYER_H_
++#define DYNAMICBEACONINGAPPLLAYER_H_
++
++#include "BaseModule.h"
++#include <BaseWaveApplLayer.h>
++#include <fstream>
++#include "mobility/traci/TraCIMobility.h"
++#include "mac/ieee80211p/Mac1609_4.h"
++#include "phy/PhyLayer80211p.h"
++
++#ifndef DBG
++#define DBG EV
++#endif
++
++#define DYNAMIC_BEACONING_SNR_THRESHOLD 50.
++#define DYNAMIC_BEACONING_NEIGHBOR_MAX_COUNT 50.
++
++class DynamicBeaconingApplLayer : public BaseWaveApplLayer {
++	public:
++		class NeighborEntry {
++			public:
++				int id;
++				double dist;
++				simtime_t createdAt;
++				simtime_t lastUpdate;
++		};
++
++		virtual ~DynamicBeaconingApplLayer();
++		virtual void initialize(int stage);
++		virtual void finish();
++
++	protected:
++		void handleSelfMsg(cMessage* msg);
++		void sendWSM(WaveShortMessage* wsm);
++		virtual void onBeacon(WaveShortMessage* wsm);
++		virtual void onData(WaveShortMessage* wsm);
++		virtual void expireNeighbors(bool expireAll = false);
++		virtual void expireStatsNeighbors(bool expireAll = false);
++
++	protected:
++		typedef std::map<int, NeighborEntry> Neighbors;
++		typedef std::set<int> TotalNeighbors;
++
++		simtime_t lastBeaconAt;
++		uint32_t beaconSeqNumber;
++
++		uint32_t receivedBeacons;
++		uint32_t receivedData;
++
++		Neighbors neighbors;
++		Neighbors statsNeighbors;
++		TotalNeighbors totalNeighbors;
++		simtime_t neighborExpiry;
++		simtime_t startBeaconingAt;
++		std::pair<simtime_t, simtime_t> lastBusyTime;
++
++		Mac1609_4* mac;
++		PhyLayer80211p* radio;
++	        double minBeaconInterval;  // minimum time in seconds to wait before sending a beacon  
++        	double maxBeaconInterval;  // maximum time in seconds to wait before sending a beacon
++
++		mutable cOutVector neighborsVec;
++		mutable cOutVector protoNeighborsVec;
++		mutable cOutVector neighborLifetimeVec;
++		mutable cOutVector protoNeighborLifetimeVec;
++		mutable cOutVector receivedBeaconsSeqNumVec;
++		mutable cOutVector receivedBeaconsSourceVec;
++		mutable cOutVector beaconIntervalVec;
++		mutable cOutVector channelPriorityVec;
++		mutable cOutVector channelBusyTimeVec;
++		mutable cOutVector channelBusyRatioVec;
++		mutable cOutVector channelNeighborsVec;
++};
++
++#endif /* DYNAMICBEACONINGAPPLLAYER_H_ */
+diff --git a/src/modules/application/dynb/DynamicBeaconingApplLayer.ned b/src/modules/application/dynb/DynamicBeaconingApplLayer.ned
+new file mode 100644
+index 0000000..2a15296
+--- /dev/null
++++ b/src/modules/application/dynb/DynamicBeaconingApplLayer.ned
+@@ -0,0 +1,33 @@
++//
++// Copyright (C) 2012 Stefan Joerer <stefan.joerer@uibk.ac.at>
++//
++// Documentation for these modules is at http://veins.car2x.org/
++//
++// This program is free software; you can redistribute it and/or modify
++// it under the terms of the GNU General Public License as published by
++// the Free Software Foundation; either version 2 of the License, or
++// (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with this program; if not, write to the Free Software
++// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++//
++
++package org.mixim.modules.application.dynb;
++import org.mixim.modules.application.ieee80211p.BaseWaveApplLayer;
++
++
++simple DynamicBeaconingApplLayer extends BaseWaveApplLayer
++{
++    parameters:
++        @class(DynamicBeaconingApplLayer);
++        double neighborExpiry @unit("s") = default(1.0s);  // time after which a neighbor entry expires
++        double startBeaconingAt @unit("s") = default(1.0s);
++        double minBeaconInterval @unit("s");  // minimum time in seconds to wait before sending a beacon
++        double maxBeaconInterval @unit("s");  // maximum time in seconds to wait before sending a beacon
++}
+diff --git a/src/modules/mac/ieee80211p/Mac1609_4.cc b/src/modules/mac/ieee80211p/Mac1609_4.cc
+index 064519e..62409ff 100755
+--- a/src/modules/mac/ieee80211p/Mac1609_4.cc
++++ b/src/modules/mac/ieee80211p/Mac1609_4.cc
+@@ -128,6 +128,8 @@ void Mac1609_4::initialize(int stage) {
+ 
+ 		idleChannel = true;
+ 		lastBusy = simTime();
++		myIdleTime = 0;
++		myBusyTime = 0;
+ 		channelIdle(true);
+ 	}
+ }
+@@ -449,6 +451,23 @@ void Mac1609_4::changeServiceChannel(int cN) {
+ 	}
+ }
+ 
++std::pair<simtime_t, simtime_t> Mac1609_4::getBusyTime() {
++
++	simtime_t idle = myIdleTime;
++	simtime_t busy = myBusyTime;
++	if (idleChannel) {
++		idle += std::max(simtime_t(0), simTime() - lastIdle);
++	}
++	else {
++		busy += std::max(simtime_t(0), simTime() - lastBusy);
++	}
++
++	//std::cerr << "t=" << simTime() << " idle: " << idle << " busy: " << busy << std::endl;
++
++	return std::make_pair(busy, idle + busy);
++}
++
++
+ void Mac1609_4::handleLowerMsg(cMessage* msg) {
+ 	Mac80211Pkt* macPkt = static_cast<Mac80211Pkt*>(msg);
+ 	ASSERT(macPkt);
+@@ -700,6 +719,7 @@ void Mac1609_4::channelBusySelf(bool generateTxOp) {
+ 	idleChannel = false;
+ 	DBG_MAC << "Channel turned busy: Switch or Self-Send" << std::endl;
+ 
++	myIdleTime += std::max(simtime_t(0), simTime() - lastIdle);
+ 	lastBusy = simTime();
+ 
+ 	//channel turned busy
+@@ -719,6 +739,7 @@ void Mac1609_4::channelBusy() {
+ 	//the channel turned busy because someone else is sending
+ 	idleChannel = false;
+ 	DBG_MAC << "Channel turned busy: External sender" << std::endl;
++	myIdleTime += std::max(simtime_t(0), simTime() - lastIdle);
+ 	lastBusy = simTime();
+ 
+ 	//channel turned busy
+@@ -755,6 +776,7 @@ void Mac1609_4::channelIdle(bool afterSwitch) {
+ 	}
+ 
+ 	//channel turned idle! lets start contention!
++	myBusyTime += std::max(simtime_t(0), simTime() - lastBusy);
+ 	lastIdle = delay + simTime();
+ 	statsTotalBusyTime += simTime() - lastBusy;
+ 
+diff --git a/src/modules/mac/ieee80211p/Mac1609_4.h b/src/modules/mac/ieee80211p/Mac1609_4.h
+index 2700a11..2066619 100755
+--- a/src/modules/mac/ieee80211p/Mac1609_4.h
++++ b/src/modules/mac/ieee80211p/Mac1609_4.h
+@@ -123,6 +123,7 @@ class Mac1609_4 : public BaseMacLayer,
+ 
+ 		void changeServiceChannel(int channelNumber);
+ 
++		std::pair<simtime_t, simtime_t> getBusyTime();
+ 
+ 	protected:
+ 		/** @brief States of the channel selecting operation.*/
+@@ -181,6 +182,10 @@ class Mac1609_4 : public BaseMacLayer,
+ 		simtime_t lastIdle;
+ 		simtime_t lastBusy;
+ 
++		/** @brief Total time the channel was idle/busy */
++		simtime_t myIdleTime;
++		simtime_t myBusyTime;
++
+ 		/** @brief Current state of the channel selecting operation.*/
+ 		t_channel activeChannel;
+ 
+-- 
+1.8.3.4
+
